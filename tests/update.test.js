@@ -84,6 +84,23 @@ test('AC-2.1: when the timer fires after a level-up, the new interval is used', 
   assert.equal(s.spawnTimerMs, 1850);
 });
 
+test('AC-2.1: DESIGN 6.2 example - spawns at 28.0 s, 30.0 s (on the level-up frame), then the gap is 1850 ms', () => {
+  let s = makeState({ elapsedSec: 27.9375, spawnTimerMs: 62.5 });
+  s = update(s, DT, seqRng([0, 0, 0]), SMALL_INDEX); // elapsed 28.0
+  assert.equal(s.elapsedSec, 28);
+  assert.equal(s.words.length, 1);
+  assert.equal(s.spawnTimerMs, 2000, 'scheduled with the level-1 interval');
+  s = run(s, 31, DT); // elapsed 29.9375
+  assert.equal(s.level, 1);
+  assert.equal(s.words.length, 1);
+  assert.equal(s.spawnTimerMs, 62.5);
+  s = update(s, DT, seqRng([0, 0.5, 0]), SMALL_INDEX); // elapsed 30.0: level 2 and the timer fires
+  assert.equal(s.elapsedSec, 30);
+  assert.equal(s.level, 2);
+  assert.equal(s.words.length, 2, 'the countdown finished on the old 2000 ms interval');
+  assert.equal(s.spawnTimerMs, 1850, 'the reschedule uses the level-2 interval (next spawn at 31.85 s)');
+});
+
 test('AC-2.6: when 10 words are active the spawn is skipped but the timer is still rescheduled', () => {
   const words = Array.from({ length: 10 }, (_, i) => makeWord(i + 1, `w${i}`, i * 10));
   const s0 = makeState({ words, nextWordId: 11, spawnTimerMs: 50 });
@@ -320,6 +337,20 @@ test('AC-5.5: the flash timer counts down in game time and ends after 300 ms', (
   assert.equal(s.flashMs, 50);
   s = update(s, DT, noRng(), SMALL_INDEX);
   assert.equal(s.flashMs, 0);
+});
+
+test('AC-5.5 / Q-7: losing the final life gives a GAME_OVER state with flashMs === 0', () => {
+  const s0 = makeState({ lives: 1, words: [makeWord(1, 'cat', 599.9)], spawnTimerMs: NO_SPAWN });
+  const s1 = update(s0, 0.05, noRng(), SMALL_INDEX);
+  assert.equal(s1.status, 'GAME_OVER');
+  assert.equal(s1.flashMs, 0);
+});
+
+test('AC-5.5 / Q-7: final life lost while an earlier flash is still running also clears it', () => {
+  const s0 = makeState({ lives: 1, flashMs: 200, words: [makeWord(1, 'cat', 599.9)], spawnTimerMs: NO_SPAWN });
+  const s1 = update(s0, 0.05, noRng(), SMALL_INDEX);
+  assert.equal(s1.status, 'GAME_OVER');
+  assert.equal(s1.flashMs, 0);
 });
 
 test('AC-5.5: no flash when nothing is missed', () => {

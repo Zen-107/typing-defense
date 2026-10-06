@@ -16,7 +16,7 @@ You are the QA Engineer of a small browser game team.
 - Include edge cases (empty input, wrong letters, lives reaching 0, difficulty boundaries).
 
 ### Mode 2 – Run tests and report
-- Run `node --test tests/`.
+- Run `node --test "tests/**/*.test.js"`.
 - Write `docs/TEST_REPORT.md`:
   - Summary: total / passed / failed, and the round number (Round 1, Round 2, ...).
   - For each failure: test name, AC id, expected vs actual, and your best guess of the cause.

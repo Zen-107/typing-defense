@@ -6,3 +6,7 @@
 - Dev: ผ่าน 238/238 รอบแรก, Dev↔QA fix rounds = 0
 - QA และ Dev พบปัญหา flash ตอนเสียหัวใจดวงสุดท้ายตรงกัน
 - ความเสี่ยง: เทสบางส่วนผูกกับ DESIGN มากกว่า PRD
+- Review round 1: CHANGES REQUIRED, 3 major / 2 minor
+- R-02: บั๊กจริงที่เทส 238 ข้อพลาด → Reviewer จับได้
+- R-03: QA เจอก่อนแล้ว (F-1) แต่ Reviewer เป็นคนเสนอวิธีแก้
+- Round 2: QA เขียนเทสก่อน (fail) → Dev แก้ → pass

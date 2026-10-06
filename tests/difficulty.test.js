@@ -184,6 +184,36 @@ test('AC-6.3 / Q-4: exact .5 rounds half up (1/8 = 12.5 -> 13, 3/8 = 37.5 -> 38)
   assert.equal(accuracyPercent(3, 5), 38);
 });
 
+test('Q-4 / AC-6.3: decimal .5 ties round half up even when not exact in binary (23 correct, 17 typos = 57.5% -> 58)', () => {
+  assert.equal(accuracyPercent(23, 17), 58);
+});
+
+test('Q-4 / AC-6.3: 29 correct out of 200 total (14.5%) rounds half up to 15', () => {
+  assert.equal(accuracyPercent(29, 171), 15);
+});
+
+test('Q-4 / AC-6.3: more decimal ties round half up (57/200 = 28.5% -> 29, 113/200 = 56.5% -> 57, 46/80 = 57.5% -> 58)', () => {
+  assert.equal(accuracyPercent(57, 143), 29);
+  assert.equal(accuracyPercent(113, 87), 57);
+  assert.equal(accuracyPercent(46, 34), 58);
+});
+
+test('Q-4 / AC-6.3: every exact .5 tie with up to 400 keystrokes rounds half up', () => {
+  const wrong = [];
+  for (let total = 1; total <= 400; total++) {
+    for (let correct = 0; correct <= total; correct++) {
+      const twice = 200 * correct; // 2 x (percent x total)
+      if (twice % total !== 0) continue;
+      const doubled = twice / total; // 2 x exact percent, an integer
+      if (doubled % 2 !== 1) continue; // only exact .5 ties
+      const expected = (doubled + 1) / 2;
+      const actual = accuracyPercent(correct, total - correct);
+      if (actual !== expected) wrong.push(`${correct}/${total}: expected ${expected}, got ${actual}`);
+    }
+  }
+  assert.deepEqual(wrong, []);
+});
+
 test('AC-6.3: accuracy is always an integer in 0..100', () => {
   for (let c = 0; c <= 20; c++) {
     for (let t = 0; t <= 20; t++) {

@@ -17,6 +17,7 @@ const COLORS = {
   typed: '#4cd964',
   flash: '#ff3b30',
   dim: '#a0a8b0',
+  banner: '#6b7785', // muted slate: readable at 48 px bold, clearly dimmer than words (#e8e8e8) and not target yellow
   overlay: 'rgba(0, 0, 0, 0.6)',
 };
 
@@ -25,16 +26,26 @@ const WORD_FONT = `${CONFIG.FONT_SIZE_PX}px ${FONT_FAMILY}`;
 
 export function createRenderer(canvas) {
   const ctx = canvas.getContext('2d');
-  let currentDpr = 0;
+  let lastCssW = -1;
+  let lastCssH = -1;
+  let lastDpr = -1;
 
+  // R-04: size the backing store from the displayed CSS size x devicePixelRatio,
+  // so text is sharp at any window size. Checked every frame (cheap compare), which
+  // covers window resizes and DPR changes (zoom, moving to another monitor).
+  // Drawing always uses the logical 800 x 680 coordinate system via the transform.
   function ensureSize() {
     const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
-    if (dpr !== currentDpr) {
-      currentDpr = dpr;
-      canvas.width = Math.round(CANVAS_W * dpr);
-      canvas.height = Math.round(CANVAS_H * dpr);
+    const cssW = canvas.clientWidth || CANVAS_W;
+    const cssH = canvas.clientHeight || CANVAS_H;
+    if (cssW !== lastCssW || cssH !== lastCssH || dpr !== lastDpr) {
+      lastCssW = cssW;
+      lastCssH = cssH;
+      lastDpr = dpr;
+      canvas.width = Math.max(1, Math.round(cssW * dpr));
+      canvas.height = Math.max(1, Math.round(cssH * dpr));
     }
-    ctx.setTransform(currentDpr, 0, 0, currentDpr, 0, 0);
+    ctx.setTransform(canvas.width / CANVAS_W, 0, 0, canvas.height / CANVAS_H, 0, 0);
   }
 
   ensureSize();
@@ -94,7 +105,8 @@ export function createRenderer(canvas) {
 
   function drawBanner(state) {
     if (state.bannerMs > 0) {
-      centerText(`Level ${state.level}`, FIELD_TOP + CONFIG.FIELD_HEIGHT / 2, `bold 48px ${FONT_FAMILY}`, COLORS.target);
+      // R-03: drawn behind the words (see render) in a muted colour distinct from the target yellow.
+      centerText(`Level ${state.level}`, FIELD_TOP + CONFIG.FIELD_HEIGHT / 2, `bold 48px ${FONT_FAMILY}`, COLORS.banner);
     }
   }
 
@@ -140,15 +152,16 @@ export function createRenderer(canvas) {
         drawStart();
         break;
       case 'PLAYING':
+        // R-03 / AC-9.3: banner first, words on top, so the banner never hides word text.
         drawHud(state);
-        drawWords(state);
         drawBanner(state);
+        drawWords(state);
         drawFlash(state);
         break;
       case 'PAUSED':
         drawHud(state);
-        drawWords(state);
         drawBanner(state);
+        drawWords(state);
         drawFlash(state);
         drawPausedOverlay();
         break;

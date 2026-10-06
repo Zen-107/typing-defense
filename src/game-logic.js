@@ -103,7 +103,8 @@ export function pointsFor(wordLength, level) {
 export function accuracyPercent(correct, typos) {
   const total = correct + typos;
   if (total === 0) return 0;
-  return Math.round((correct / total) * 100);
+  // Multiply first so exact .5 ties stay exact and round half up (Q-4).
+  return Math.round((correct * 100) / total);
 }
 
 export function clampDt(dtSec) {
@@ -255,6 +256,7 @@ export function update(state, dtSec, rng, wordsByLength) {
   if (s.lives === 0) {
     s.status = 'GAME_OVER';
     s.gameOverMs = 0;
+    s.flashMs = 0; // Q-7: no flash carried into GAME_OVER (DESIGN rev 2, 6.1 step 6)
     s.targetId = null;
     s.typed = '';
     return s;

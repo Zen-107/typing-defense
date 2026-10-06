@@ -4,21 +4,25 @@ body {
   padding: 0;
   width: 100%;
   height: 100%;
-  overflow: hidden;
+  overflow: hidden; /* NFR-6: never scroll */
   background: #0a0d10;
 }
 
 body {
   display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
 #game {
   display: block;
-  /* Logical size 800 x 680; scale to fit the window, keep aspect ratio. */
-  width: min(100vw, calc(100vh * 800 / 680));
-  height: min(100vh, calc(100vw * 680 / 800));
+  /* margin: auto centres the canvas but, unlike align/justify-content: center,
+     never pushes it off the top/left edge when it is larger than the window. */
+  margin: auto;
+  /* Logical size 800 x 680; scale to fit the window, keep aspect ratio.
+     NFR-8 floor: 667 px wide = 667/800 scale, so the 24 px word font is shown at
+     >= 20 CSS px. In windows smaller than 667 x 567 the canvas keeps that size and
+     the right/bottom edge is clipped (no scrolling) instead of the text shrinking. */
+  width: max(667px, min(100vw, calc(100vh * 800 / 680)));
+  height: auto;
   aspect-ratio: 800 / 680;
   background: #101418;
   outline: none;

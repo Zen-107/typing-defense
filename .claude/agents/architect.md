@@ -22,7 +22,7 @@ Read `docs/PRD.md`. Do not change it; if something in it is unclear or impossibl
 - `src/game-logic.js` contains ALL game rules and must be pure: no DOM, no `window`, no timers, no randomness inside functions (pass random values or a word picker in as parameters) so it is deterministic and testable.
 - `src/renderer.js` and `src/main.js` handle the DOM, canvas, keyboard and the game loop only.
 - Use ES modules (`export` / `import`). The game must run when `src/index.html` is opened with a local static server (e.g. VS Code Live Server).
-- Unit tests run with Node's built-in runner: `node --test tests/`. No other test libraries.
+- Unit tests run with Node's built-in runner: `node --test "tests/**/*.test.js"`. No other test libraries.
 
 ## Rules
 - Do not write implementation code (short signature examples are fine).
