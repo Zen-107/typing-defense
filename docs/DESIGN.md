@@ -13,7 +13,7 @@ Source of truth: `docs/PRD.md` (Revision 2, including US-10 Auto-pause). This do
 | Rendering | One `<canvas>` element, 2D context | 10 words + HUD is cheap to redraw every frame (NFR-2). One draw path, full control over per-character colors (AC-3.9). |
 | Font | System monospace stack (`"Courier New", Consolas, monospace`), 24 px | Fixed character width lets the pure logic compute word width without the DOM (AC-2.2). No web font, so no network request (NFR-1). 24 px >= 20 px (NFR-8). |
 | Game loop | `requestAnimationFrame` in `main.js` | Frame-rate-independent `dt` comes from the rAF timestamp (NFR-3). |
-| Unit tests | Node built-in test runner (`node:test`) + `node:assert/strict` | No test library needed. Node 20 or newer. |
+| Unit tests | Node built-in test runner (`node:test`) + `node:assert/strict` | No test library needed. Node 21 or newer (glob arguments, see R-1); Node 24 in use. |
 | Dependencies | None (no npm packages for game or tests) | `package.json` exists only to set `"type": "module"` and a `test` script. |
 
 ### Commands
@@ -24,16 +24,16 @@ Run the game (any static server; ES modules do not load from `file://`):
 - Or: `npx http-server . -p 8000` (dev convenience only, not a project dependency).
 
 Run the tests (from the repo root):
-- `node --test tests/`
+- `node --test "tests/**/*.test.js"` (quoted, so Node expands the glob, not the shell; works the same in PowerShell, cmd and bash)
 - Same thing via npm: `npm test`
-- Fallback if the installed Node version does not accept a directory argument (see Risk R-1): `node --test "tests/**/*.test.js"` (quoted, so Node expands the glob, not the shell).
+- Do not use the folder form `node --test tests/`: it fails on Node 24 (see Risk R-1).
 
 ---
 
 ## 2. File Structure
 
 ```
-package.json                 # { "type": "module", "private": true, "scripts": { "test": "node --test tests/" } } - no dependencies
+package.json                 # { "type": "module", "private": true, "scripts": { "test": "node --test \"tests/**/*.test.js\"" } } - no dependencies
 src/
   index.html                 # page shell: <canvas id="game">, loads main.js as type="module"
   style.css                  # page layout, canvas scaling, dark background
@@ -135,7 +135,7 @@ Tuning after playtest (PRD 4.3 note) only changes these constants.
   typos: 0,                 // integer
   correctKeystrokes: 0,     // integer, for accuracy (AC-6.3)
   spawnTimerMs: 0,          // ms of game time remaining until the next scheduled spawn
-  flashMs: 0,               // ms remaining of the life-lost flash (0 = off)
+  flashMs: 0,               // ms remaining of the life-lost flash (0 = off); always 0 in GAME_OVER
   bannerMs: 0,              // ms remaining of the "Level N" banner (0 = off); banner shows state.level
   gameOverMs: 0,            // ms spent in GAME_OVER (for the Enter guard)
   skipNextDt: false         // true => the next update() uses dt = 0 (after start / resume)
@@ -162,7 +162,7 @@ Word `x` is the left edge of the text in logical px. Word `y` is the baseline in
 |---|---|---|---|
 | START | Enter | PLAYING | `startGame()`; all other keys ignored (AC-1.2) |
 | START | focus loss | START | no-op (AC-10.2) |
-| PLAYING | lives become 0 in `update` | GAME_OVER | same update call; no spawn after (AC-6.1) |
+| PLAYING | lives become 0 in `update` | GAME_OVER | same update call; no spawn after (AC-6.1); `gameOverMs = 0`, `flashMs = 0`, target cleared |
 | PLAYING | focus loss | PAUSED | synchronous in the event handler (AC-10.1) |
 | PLAYING | Enter | PLAYING | no-op (AC-3.10) |
 | PAUSED | Enter | PLAYING | sets `skipNextDt = true`, keeps target/typed (AC-10.6, AC-10.7) |
@@ -253,15 +253,15 @@ export function createRenderer(canvas) // -> { render(state) }
   3. Time and level: `elapsedSec += dt`; `newLevel = levelForElapsed(elapsedSec)`; if `newLevel > level`: set `level`, `bannerMs = 1000` (AC-8.1, AC-9.4).
   4. Movement: every word `y += fallSpeed(level) * dt` (current level for all words, AC-2.7, AC-2.9).
   5. Misses: every word with `y >= 600` is removed; `lives = max(0, lives - 1)` per word; if it was the target, `targetId = null`, `typed = ''`; set `flashMs = 300` if any miss (AC-5.1-5.5). Score unchanged.
-  6. Game over: if `lives === 0`: `status = 'GAME_OVER'`, `gameOverMs = 0`, `targetId = null`, `typed = ''`; return (no spawn in this frame, AC-6.1).
-  7. Spawn timer: `spawnTimerMs -= dt*1000`; if `spawnTimerMs <= 0`: `state = trySpawn(...)` and `spawnTimerMs += spawnIntervalMs(level)` whether or not the spawn was skipped (AC-2.1, AC-2.4, AC-2.6). Using `+=` (not `=`) keeps the cadence exact across frames. Because `MAX_DT_SEC` (100 ms) < `MIN_SPAWN_MS` (650 ms), at most one spawn per update.
+  6. Game over: if `lives === 0`: `status = 'GAME_OVER'`, `gameOverMs = 0`, `flashMs = 0`, `targetId = null`, `typed = ''`; return (no spawn in this frame, AC-6.1). Clearing `flashMs` overrides the `flashMs = 300` set by step 5 for the final miss, so a GAME_OVER state never carries an active flash (Q-7, resolved in logic).
+  7. Spawn timer: `spawnTimerMs -= dt*1000`; if `spawnTimerMs <= 0`: `state = trySpawn(...)` and `spawnTimerMs += spawnIntervalMs(level)` whether or not the spawn was skipped (AC-2.1, AC-2.4, AC-2.6). Using `+=` (not `=`) keeps the cadence exact across frames. Because `MAX_DT_SEC` (100 ms) < `MIN_SPAWN_MS` (650 ms), at most one spawn per update. AC-2.1 reading (confirmed by the user, OI-3): `spawnIntervalMs(level)` is read only here, at reschedule time, using the level after step 3 of the same update. A countdown that is already running is never shortened or lengthened by a level-up; it finishes with the interval it was scheduled with, and the new level's interval applies from the next reschedule onward.
 
 ### 6.2 Specific rules
 
 | Rule | Implementation |
 |---|---|
 | First spawn <= 500 ms (AC-1.4) | `startGame` sets `spawnTimerMs = 0`, so the first PLAYING update (dt = 0 via `skipNextDt`) spawns the first word at elapsed 0. |
-| Level change at next scheduled spawn (AC-2.1) | The interval is read at the moment of rescheduling (step 7), so a new level affects the gap after the next spawn, not the one already counting down. |
+| Level change at next scheduled spawn (AC-2.1) | Confirmed by the user (OI-3). The interval is read only at the moment of rescheduling (step 7). The countdown already running when the level goes up keeps the old level's interval; the new level's interval applies from the next reschedule, i.e. to the gap after the next spawn. `spawnTimerMs` is never recomputed on level-up. Example: at level 1 a spawn at 28.0 s schedules the next at 30.0 s (2000 ms); the level becomes 2 at 30.0 s, the spawn at 30.0 s reschedules with 1850 ms, so the following spawn is at 31.85 s. |
 | Fall speed / frame-rate independence (AC-2.7, NFR-3) | `y += speed * dt` with real `dt`. 15.0 s at 40 px/s for any frame rate, up to float error. |
 | Length bands (AC-2.3, AC-8.4) | `lengthRange(level)` + uniform `floor(rng()*(n))` index; the word is then picked from `wordsByLength[len]` only. |
 | No duplicates (AC-2.4) | Step 3 of `trySpawn`; 10 attempts, then skip. |
@@ -281,7 +281,7 @@ export function createRenderer(canvas) // -> { render(state) }
 | Modifier combos | `main.js` does not forward keydowns with `ctrlKey`, `metaKey` or `altKey` (so browser shortcuts like Ctrl+R still work), nor events with `isComposing`. Shift+letter is forwarded (case-insensitive). See Q-5. |
 | Game-over Enter guard (AC-6.5) | `gameOverMs` is accumulated by `update` while in GAME_OVER (real frame time, capped). `handleKey` accepts Enter only when `gameOverMs >= 500`. |
 | Accuracy (AC-6.3) | `accuracyPercent(correctKeystrokes, typos)`, computed by the renderer at display time from state fields. |
-| Life-lost flash (AC-5.5) | `flashMs` set to 300 in update; renderer draws a red border while `flashMs > 0`. Frozen while PAUSED because `update` does nothing there. |
+| Life-lost flash (AC-5.5) | `flashMs` set to 300 in update; renderer draws a red border while `flashMs > 0`. Frozen while PAUSED because `update` does nothing there. On the final miss, step 6 resets `flashMs` to 0 when entering GAME_OVER, so no flash is carried into the results screen (Q-7). The renderer may still skip the flash in GAME_OVER as a second safeguard. |
 | Level banner (AC-9.4) | `bannerMs` set to 1000 on level up; renderer shows "Level N" (N = `state.level`) while `bannerMs > 0`. |
 | Focus loss (AC-10.1) | `main.js`: `document.addEventListener('visibilitychange', ...)` when `document.visibilityState === 'hidden'`, and `window.addEventListener('blur', ...)`; both call `state = handleFocusLoss(state)` synchronously. Both may fire for one tab switch; the second is a no-op (AC-10.2). |
 | Pause freezing (AC-10.3) | `update` returns PAUSED state unchanged, so y, elapsed, level, spawn timer, flash, banner are all frozen for any pause length. |
@@ -341,7 +341,7 @@ export function createRenderer(canvas) // -> { render(state) }
 ## 9. Testing Notes
 
 ### How to test
-- `node --test tests/` from the repo root. Test files import `../src/game-logic.js` and `../src/words.js` directly; no browser, no DOM (NFR-7).
+- `node --test "tests/**/*.test.js"` (or `npm test`) from the repo root. Test files import `../src/game-logic.js` and `../src/words.js` directly; no browser, no DOM (NFR-7).
 - Do NOT import `renderer.js` or `main.js` in tests (they touch the DOM).
 
 ### Fixtures (`tests/fixtures.js`)
@@ -354,7 +354,7 @@ export function createRenderer(canvas) // -> { render(state) }
 - **Pure formulas**: every row of the 4.3 table for `levelForElapsed` (0, 29.9, 30, 270, 600), `spawnIntervalMs`, `fallSpeed`, `lengthRange` for levels 1-10; `pointsFor` PRD examples (30, 240, 800); `accuracyPercent` (0/0 -> 0, rounding); `clampDt` (2.0 -> 0.1, negative -> 0).
 - **`handleKey`**: every AC-3.x and AC-4.x example, including the "cat"/"car" lock example, tie-break by y then id, uppercase letters, ignored keys (digits, space, arrows, `'Shift'`), Enter in each status, Enter guard at `gameOverMs` 499 vs 500, PAUSED ignoring letters/Backspace/Escape (state deep-equals input).
 - **`trySpawn`**: scripted rng to hit each branch: duplicate retry, first-letter retry, 10 failed attempts -> skip, 10 active words -> skip with no rng calls, x bounds with r = 0 and r -> 1 (`0.999999`), length bounds per level, `id` increment.
-- **`update`**: movement over N frames at 30 fps and 144 fps reaches y = 600 at 15.0 s +/- 0.1 s; dt cap; multiple misses in one frame; lives never < 0; GAME_OVER in same update, no spawn after; spawn cadence (first spawn at t = 0, next at 2000 ms at level 1); level change affects the following interval; banner/flash timers count down in game time.
+- **`update`**: movement over N frames at 30 fps and 144 fps reaches y = 600 at 15.0 s +/- 0.1 s; dt cap; multiple misses in one frame; lives never < 0; GAME_OVER in same update, no spawn after; final miss -> GAME_OVER state has `flashMs === 0` (Q-7; e.g. `lives: 1`, one word at `y: 599.9`, `update(state, 0.05, ...)`, assert `status === 'GAME_OVER'` and `flashMs === 0`), while a non-final miss still sets `flashMs === 300`; spawn cadence (first spawn at t = 0, next at 2000 ms at level 1); AC-2.1 confirmed reading: a countdown running across the 30 s boundary still finishes on the old 2000 ms interval, and only the reschedule after that spawn uses 1850 ms (see the 6.2 example); banner/flash timers count down in game time.
 - **Pause**: `handleFocusLoss` in each status; `update(paused, 60, ...)` changes nothing (60-second pause); resume -> first update with dt = 1.0 leaves y unchanged; spawn timer remaining 700 ms is still 700 ms after the pause; target and typed kept; counters identical to a no-pause run (AC-10.10: run the same input/rng script with and without a pause and compare).
 - **Immutability**: after any call, the input state is deep-equal to a `structuredClone` taken before the call.
 - **Word list**: lowercase a-z only, no duplicates, lengths only 3-8, >= 40 per length.
@@ -366,7 +366,7 @@ AC-3.9 colors, AC-5.5 flash duration, AC-9.1-9.4 HUD layout and banner, AC-10.4 
 
 ## 10. Risks
 
-- **R-1 `node --test tests/` and Node versions.** Node 20 accepts a directory argument; some Node 21/22 releases treat arguments as glob patterns and may not run a bare directory. Mitigation: all test files end in `.test.js` (default runner pattern), and the documented fallback is `node --test "tests/**/*.test.js"`. Use Node 20 LTS or 22 LTS.
+- **R-1 Test command and Node versions.** Since Node 21 the test runner treats its arguments as glob patterns, and the folder form `node --test tests/` fails on the installed Node v24.13.1. The primary (and only documented) command is therefore `node --test "tests/**/*.test.js"`, which `package.json`'s `test` script already uses. The pattern must stay quoted so Node, not the shell, expands it. All test files must end in `.test.js`; `tests/fixtures.js` is deliberately not matched. Requires Node 21 or newer (glob support); Node 24 is the version in use.
 - **R-2 ESM in Node.** Without `"type": "module"` in `package.json`, Node may load `src/*.js` as CommonJS (or warn). The root `package.json` (no dependencies) fixes this. The browser ignores it.
 - **R-3 Text width.** AC-2.2 depends on rendered width, but the logic cannot measure text. The design assumes a monospace font with advance <= 15 px at 24 px. If a system font is wider, a word could exceed the right margin. Mitigation: renderer can check `ctx.measureText('m').width` at boot and log a warning; the constant is conservative (0.625 em).
 - **R-4 Floating-point time.** `elapsedSec` is a sum of frame dts, so the 30 s boundary is crossed within one frame (<= 16.7 ms), not exactly at 30.000. Exact boundary tests should target `levelForElapsed`, not `update` sequences.
@@ -386,5 +386,21 @@ None of these block development; the design uses the stated default.
 - **Q-4 Accuracy rounding.** "Nearest integer" for exact .5 cases (e.g. 66.5%). Default: round half up (`Math.round`).
 - **Q-5 Modifier keys.** AC-3.1 ignores "modifier keys alone", but does Ctrl/Alt/Cmd + letter count as a letter? Default: no, these combos are ignored (and left to the browser). Shift + letter counts.
 - **Q-6 AC-6.5 time base.** GAME_OVER has no game time. Default: the 500 ms guard uses real frame time (capped dt) spent on the GAME_OVER screen.
-- **Q-7 Final-life flash.** When the last life is lost, the game goes straight to GAME_OVER; should the red flash (AC-5.5) still show on the results screen? Default: no, the GAME_OVER screen replaces the playfield.
+- **Q-7 Final-life flash.** When the last life is lost, the game goes straight to GAME_OVER; should the red flash (AC-5.5) still show on the results screen? Default: no. This is enforced in the logic: `update` sets `flashMs = 0` when it enters GAME_OVER (6.1 step 6), so it is unit-testable (assert `flashMs === 0` on the GAME_OVER state after the final miss). The renderer also skips the flash in GAME_OVER.
 - **Q-8 First spawn timing.** AC-1.4 allows up to 500 ms. Default: the first word spawns at elapsed 0, and later spawns follow the interval from that moment.
+
+### Confirmed readings (no longer open)
+
+- **AC-2.1 level change and the spawn timer** (confirmed by the user, OI-3). The countdown already running keeps the old interval; the new level's interval applies from the next reschedule. See 6.1 step 7 and the AC-2.1 row in 6.2.
+
+---
+
+## 12. Changelog
+
+### 2026-10-06 - Revision 2
+- **Test command.** Replaced every `node --test tests/` with `node --test "tests/**/*.test.js"` (Section 1 commands and tech-stack row, Section 2 `package.json` line, Section 9 "How to test"). R-1 now states the glob is the primary command, not a fallback. Reason: the folder form fails with the Node 24 test runner (installed v24.13.1), which treats arguments as glob patterns.
+- **Flash cleared at game over.** 6.1 step 6 now sets `flashMs = 0` when the state becomes GAME_OVER; updated the 4.2 state comment, the 4.3 transition table, the AC-5.5 row in 6.2, Q-7 and the `update` testing notes. Reason: Q-7 ("no red flash on the last life") now holds in the logic itself and is unit-testable, not only because the renderer skips it (TEST_REPORT Round 1, OI-1 / F-3).
+- **AC-2.1 reading confirmed.** Made explicit in 6.1 step 7, the AC-2.1 row in 6.2 (with a worked example) and the `update` testing notes: a running countdown keeps the old interval, and the new level's interval applies from the next reschedule. Recorded under "Confirmed readings" in Section 11. Reason: the user confirmed the current design (OI-3).
+
+### 2026-10-06 - Revision 1
+- First version of the design.

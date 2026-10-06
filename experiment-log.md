@@ -2,3 +2,7 @@
 - PO ถามคำถามกลับ 5 ข้อ → มนุษย์ตัดสินใจ (intervention #1: requirement clarification)
 - Architect: DESIGN ~30KB, ถามกลับ 8 ข้อ (ยอมรับค่าเริ่มต้นทั้งหมด)
 - พบความไม่สอดคล้อง: DESIGN อ้างถึง package.json แต่กฎของ Developer อนุญาตแค่ src/ → มนุษย์แก้ใน prompt (intervention #2)
+- QA: 238 tests / 8 files, ไม่ได้อ่าน src/ (test-first)
+- Dev: ผ่าน 238/238 รอบแรก, Dev↔QA fix rounds = 0
+- QA และ Dev พบปัญหา flash ตอนเสียหัวใจดวงสุดท้ายตรงกัน
+- ความเสี่ยง: เทสบางส่วนผูกกับ DESIGN มากกว่า PRD
