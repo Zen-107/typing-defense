@@ -1,2 +1,4 @@
 - PO agent ใช้เวลา ... นาที, ได้ 9 user stories / ~45 ACs
 - PO ถามคำถามกลับ 5 ข้อ → มนุษย์ตัดสินใจ (intervention #1: requirement clarification)
+- Architect: DESIGN ~30KB, ถามกลับ 8 ข้อ (ยอมรับค่าเริ่มต้นทั้งหมด)
+- พบความไม่สอดคล้อง: DESIGN อ้างถึง package.json แต่กฎของ Developer อนุญาตแค่ src/ → มนุษย์แก้ใน prompt (intervention #2)
