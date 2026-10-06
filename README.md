@@ -219,24 +219,37 @@ typing-defense/
 
 นี่คือแนวคิดที่สำคัญที่สุดของโปรเจกต์ โค้ดถูกแบ่งเป็น 2 ฝั่ง:
 
+```mermaid
+flowchart TB
+    subgraph Browser["เบราว์เซอร์ (โลกจริง)"]
+        KB["คีย์บอร์ด<br/>keydown"]
+        FOCUS["สลับแท็บ / เสียโฟกัส<br/>visibilitychange, blur"]
+        RAF["เวลาจริง<br/>requestAnimationFrame"]
+        RND["Math.random"]
+        CANVAS["#lt;canvas#gt;"]
+    end
+
+    MAIN["main.js<br/>รับ event → ส่งต่อให้ logic → เอา state ใหม่ไปวาด"]
+
+    subgraph Pure["ส่วนที่เทสได้ (pure)"]
+        LOGIC["game-logic.js<br/>ไม่รู้จัก DOM / เวลา / random"]
+        WORDS["words.js<br/>รายการคำศัพท์"]
+    end
+
+    RENDER["renderer.js<br/>อ่าน state อย่างเดียว"]
+
+    KB --> MAIN
+    FOCUS --> MAIN
+    RAF -->|"timestamp → dt"| MAIN
+    RND -->|"rng"| MAIN
+    WORDS --> MAIN
+    MAIN -->|"state, key, dt, rng"| LOGIC
+    LOGIC -->|"state ใหม่"| MAIN
+    MAIN -->|"state"| RENDER
+    RENDER --> CANVAS
 ```
-┌──────────────────────────── เบราว์เซอร์ ────────────────────────────┐
-│                                                                     │
-│   คีย์บอร์ด ──┐        เวลาจริง (rAF)      Math.random              │
-│   สลับแท็บ ──┤             │                   │                    │
-│              ▼             ▼                   ▼                    │
-│        ┌───────────────── main.js ─────────────────────┐            │
-│        │  รับ event → ส่งต่อให้ logic → เอา state ใหม่ไปวาด │            │
-│        └───────┬──────────────────────────────▲────────┘            │
-│                │ state, key, dt, rng          │ state ใหม่            │
-│                ▼                              │                     │
-│        ┌──────────────── game-logic.js ───────┴───────┐             │
-│        │  pure functions: ไม่รู้จัก DOM / เวลา / random   │  ◄── เทสได้  │
-│        └───────────────────────────────────────────────┘             │
-│                                                                     │
-│        main.js ── state ──► renderer.js ──► <canvas>                │
-└─────────────────────────────────────────────────────────────────────┘
-```
+
+ลูกศรทุกเส้นที่เข้า `game-logic.js` ผ่าน `main.js` เท่านั้น เวลาจริงและความสุ่มจึงไม่เคยเข้าไปถึง logic โดยตรง
 
 ### "Pure function" คืออะไร และทำไมสำคัญ
 
@@ -324,13 +337,15 @@ const rng = seqRng([0.0, 0.5, 0.25]);   // เรียกครั้งที�
 
 ### 6.2 State Machine
 
-```
-           Enter                       หัวใจหมด (ใน update)
-  START ──────────► PLAYING ─────────────────────────────► GAME_OVER
-                     │   ▲                                     │
-          สลับแท็บ /  │   │ Enter                               │ Enter
-          เสียโฟกัส   ▼   │                                     │ (หลังผ่านไป ≥ 500 ms)
-                    PAUSED                PLAYING ◄────────────┘
+```mermaid
+stateDiagram-v2
+    [*] --> START: โหลดหน้าเว็บ
+    START --> PLAYING: Enter
+    PLAYING --> PAUSED: สลับแท็บ / เสียโฟกัส
+    PAUSED --> PLAYING: Enter (เฟรมแรก dt = 0)
+    PLAYING --> GAME_OVER: หัวใจหมด (ใน update)
+    GAME_OVER --> GAME_OVER: Enter ก่อนครบ 500 ms (ไม่มีผล)
+    GAME_OVER --> PLAYING: Enter หลังครบ 500 ms (เริ่มเกมใหม่)
 ```
 
 | จาก | เหตุการณ์ | ไป | หมายเหตุ |
@@ -373,6 +388,27 @@ y += speed * dt      // speed หน่วย px/วินาที, dt หน�
 
 ลำดับนี้ถูกกำหนดไว้ใน DESIGN.md และ **สลับลำดับไม่ได้** เพราะเทสถูกเขียนตามลำดับนี้:
 
+```mermaid
+flowchart TD
+    IN(["update(state, dtSec, rng, wordsByLength)"]) --> S{"status?"}
+    S -->|"START / PAUSED"| SAME(["คืน state เดิม<br/>ทุกอย่างหยุดนิ่ง"])
+    S -->|"GAME_OVER"| GO(["gameOverMs += dt"])
+    S -->|"PLAYING"| A["1. คำนวณ dt<br/>skipNextDt ? 0 : clampDt"]
+    A --> B["2. ลดตัวจับเวลา<br/>flashMs, bannerMs"]
+    B --> C["3. เพิ่ม elapsedSec<br/>เลเวลขึ้น → bannerMs = 1000"]
+    C --> D["4. เลื่อนคำทุกคำ<br/>y += speed × dt"]
+    D --> E["5. คำที่ y ≥ 600 → ลบออก<br/>ลดหัวใจ, flashMs = 300"]
+    E --> F{"6. หัวใจ = 0?"}
+    F -->|"ใช่"| OVER(["GAME_OVER<br/>flashMs = 0, ไม่เกิดคำใหม่"])
+    F -->|"ไม่"| G["7. spawnTimerMs -= dt"]
+    G --> H{"spawnTimerMs ≤ 0?"}
+    H -->|"ใช่"| I["trySpawn<br/>spawnTimerMs += interval"]
+    H -->|"ไม่"| OUT(["คืน state ใหม่"])
+    I --> OUT
+```
+
+รายละเอียดแต่ละขั้น:
+
 1. **คำนวณ dt** ถ้า `skipNextDt` เป็น true ให้ dt = 0 ไม่อย่างนั้นใช้ `clampDt(dtSec)` ซึ่งจำกัดไม่เกิน 0.1 วินาที
 2. **ลดตัวจับเวลา** `flashMs` และ `bannerMs`
 3. **เพิ่มเวลาและเช็กเลเวล** ถ้าเลเวลเพิ่ม ให้ตั้ง `bannerMs = 1000`
@@ -409,6 +445,21 @@ y += speed * dt      // speed หน่วย px/วินาที, dt หน�
 
 ### 8.2 กติกาการเล็ง
 
+```mermaid
+flowchart TD
+    K(["กดตัวอักษร L ตอน PLAYING"]) --> T{"กำลังเล็งคำอยู่?"}
+    T -->|"ไม่"| F{"มีคำที่ขึ้นต้นด้วย L?"}
+    F -->|"ไม่มี"| TYPO1["typos + 1"]
+    F -->|"มี"| PICK["เลือกคำที่ y มากที่สุด<br/>ถ้าเท่ากัน เลือก id น้อยกว่า<br/>typed = L"]
+    T -->|"ใช่"| N{"L ตรงกับตัวถัดไป<br/>ของคำที่เล็ง?"}
+    N -->|"ไม่ตรง"| TYPO2["typos + 1<br/>ยังเล็งคำเดิม"]
+    N -->|"ตรง"| ADD["typed += L"]
+    PICK --> FULL{"พิมพ์ครบทั้งคำ?"}
+    ADD --> FULL
+    FULL -->|"ครบ"| KILL["ลบคำ + ได้คะแนน<br/>ยกเลิกการเล็ง"]
+    FULL -->|"ยังไม่ครบ"| WAIT["รอตัวถัดไป"]
+```
+
 **ยังไม่ได้เล็งคำไหน** แล้วพิมพ์ตัวอักษร L:
 - หาคำที่ขึ้นต้นด้วย L ถ้ามีหลายคำ ให้เลือก **คำที่อยู่ต่ำที่สุด** (y มากที่สุด = อันตรายที่สุด) ถ้า y เท่ากัน เลือกคำที่ **เกิดก่อน** (id น้อยกว่า)
 - ถ้าไม่มีคำไหนขึ้นต้นด้วย L → นับเป็นพิมพ์ผิด
@@ -436,19 +487,19 @@ y += speed * dt      // speed หน่วย px/วินาที, dt หน�
 
 ทุกอย่างถูกวาดในพิกัด "logical" ขนาด 800 × 680 เสมอ ไม่ว่าหน้าต่างจะใหญ่หรือเล็กแค่ไหน:
 
+```mermaid
+flowchart TB
+    subgraph CANVAS["canvas 800 × 680 (พิกัด logical)"]
+        direction TB
+        HUD["แถบ HUD 40 px<br/>canvas y 0–40<br/>Score: 120 · Lives: 3 · Level: 2"]
+        PADTOP["เว้นว่าง 28 px<br/>canvas y 40–68<br/>ให้คำที่เพิ่งเกิดมองเห็นได้เต็มตัว"]
+        FIELD["สนามเล่น 600 px<br/>canvas y 68–668<br/>ในเกมคือ y = 0 ถึง y = 600 (เส้นพื้น)"]
+        PADBOT["เว้นว่าง 12 px<br/>canvas y 668–680<br/>ให้หางตัวอักษร เช่น g, y"]
+        HUD ~~~ PADTOP ~~~ FIELD ~~~ PADBOT
+    end
 ```
-y = 0   ┌─────────────────────────────────────┐
-        │ Score: 120   Lives: 3   Level: 2    │ ← แถบ HUD 40 px
-y = 40  ├─────────────────────────────────────┤
-        │ (เว้นว่าง 28 px ให้คำที่เพิ่งเกิดมองเห็นได้เต็มตัว)   │
-y = 68  ├───────────── สนามเล่น y = 0 ──────────┤
-        │        cat                          │
-        │                  planet             │ ← สนามเล่น 600 px
-        │    tree                             │
-y = 668 ├───────────── เส้นพื้น y = 600 ────────┤
-        │ (เว้นว่าง 12 px ให้หางตัวอักษร เช่น g, y)        │
-y = 680 └─────────────────────────────────────┘
-```
+
+สังเกตว่ามีพิกัด 2 ชุด: พิกัดของ canvas (0–680) ใช้ตอนวาด ส่วนพิกัดในเกม (y = 0 ถึง 600) ใช้ใน logic โดย y = 0 ในเกมตรงกับ y = 68 บน canvas
 
 ทำไมต้องเว้น 28 px ด้านบน? เพราะตำแหน่ง y ของคำคือ **เส้นฐาน (baseline)** ของตัวอักษร คำที่เพิ่งเกิดที่ y = 0 ตัวอักษรจะอยู่เหนือเส้นนั้น ถ้าไม่เว้นที่ไว้ คำจะถูกตัดหายไปครึ่งตัว
 
@@ -566,37 +617,28 @@ CSS กำหนด "ขนาดที่แสดง" แต่ canvas ยั�
 
 ### 11.2 ลำดับการทำงาน (pipeline)
 
+```mermaid
+flowchart TD
+    H(["มนุษย์: อยากได้เกมพิมพ์ดีด<br/>คำร่วงลงมา มี 3 ชีวิต"]) --> PO["① product-owner<br/>เขียน PRD.md"]
+    PO -->|"ถามกลับ 5 ข้อ"| H1{{"มนุษย์ตัดสินใจ"}}
+    H1 --> PO2["PRD ฉบับสมบูรณ์"]
+    PO2 --> AR["② architect<br/>เขียน DESIGN.md"]
+    AR -->|"ถามกลับ 8 ข้อ"| H2{{"มนุษย์ยอมรับ<br/>ค่าเริ่มต้นทั้งหมด"}}
+    H2 --> QA1["③ qa-tester โหมด 1<br/>เขียนเทส 238 ข้อ<br/>โดยไม่เห็นโค้ด"]
+    H2 --> DEV["④ developer<br/>เขียน src/<br/>โดยไม่เห็นเทส"]
+    QA1 --> RUN["รันเทส: ผ่าน 238/238"]
+    DEV --> RUN
+    RUN --> QA2["⑤ qa-tester โหมด 2<br/>TEST_REPORT.md"]
+    QA2 --> RV["⑥ reviewer<br/>REVIEW.md"]
+    RV --> OK{"ผลรีวิว?"}
+    OK -->|"ต้องแก้"| H3{{"มนุษย์เลือกว่า<br/>จะแก้ข้อไหน"}}
+    H3 --> FIX1["QA เขียนเทสที่ fail ก่อน"]
+    FIX1 --> FIX2["developer แก้ src/"]
+    FIX2 --> QA2
+    OK -->|"ผ่านแบบมีเงื่อนไข"| DONE(["รอบ 2: 245/245<br/>รอมนุษย์ playtest"])
 ```
-  มนุษย์: "อยากได้เกมพิมพ์ดีด คำร่วงลงมา มี 3 ชีวิต"
-     │
-     ▼
- ① product-owner ──► PRD.md ──► ถามกลับ 5 ข้อ ──► มนุษย์ตอบ ──► PRD ฉบับสมบูรณ์
-     │
-     ▼
- ② architect ──► DESIGN.md ──► ถามกลับ 8 ข้อ ──► มนุษย์ยอมรับค่าเริ่มต้นทั้งหมด
-     │
-     ├───────────────────────────┐
-     ▼                           ▼
- ③ qa-tester (โหมด 1)          ④ developer
-    เขียนเทส 238 ข้อ             เขียน src/
-    โดยไม่เห็นโค้ด                 โดยไม่เห็นเทส
-     │                           │
-     └─────────────┬─────────────┘
-                   ▼
-            รันเทส: ผ่าน 238/238
-                   │
-                   ▼
- ⑤ qa-tester (โหมด 2) ──► TEST_REPORT.md รอบ 1
-                   │
-                   ▼
- ⑥ reviewer ──► REVIEW.md รอบ 1: "ต้องแก้" (major 3 ข้อ)
-                   │
-                   ▼
- ⑦ วนรอบแก้ไข: QA เขียนเทสที่ fail ก่อน → developer แก้ → เทสผ่าน → QA รายงาน → reviewer รีวิว
-                   │
-                   ▼
-            รอบ 2: "ผ่านแบบมีเงื่อนไข" 245/245
-```
+
+เส้นทางวนกลับจาก ⑥ ไป ⑤ คือ "รอบ" (Round) ของการแก้ไข โปรเจกต์นี้วนไป 2 รอบ แล้วมนุษย์ตัดสินใจหยุด (timebox)
 
 **ทำไม QA กับ Developer ถึงไม่เห็นงานของกันและกัน?**
 ถ้า QA อ่านโค้ดก่อนเขียนเทส เทสจะ "ยืนยันสิ่งที่โค้ดทำ" แทนที่จะ "ตรวจว่าโค้ดทำตามข้อกำหนดหรือไม่" ถ้าโค้ดผิด เทสก็จะผิดตาม การแยกกันทำให้ทั้งสองฝั่งต้องยึด PRD/DESIGN เป็นตัวกลาง ถ้าผลตรงกันแสดงว่าทั้งเอกสาร เทส และโค้ดสอดคล้องกันจริง
@@ -632,16 +674,28 @@ agent ไม่ได้ทำทุกอย่างเอง มนุษย�
 
 > ระวังสับสน: `R-1` (ไม่มีเลข 0) ใน DESIGN คือ **ความเสี่ยง** ส่วน `R-01` (มีเลข 0) ใน REVIEW คือ **ข้อพบจากการรีวิว**
 
+ตัวอย่างการตามรอยกฎข้อเดียว ตั้งแต่ความต้องการจนถึงโค้ดและเทส:
+
+```mermaid
+flowchart LR
+    AC["PRD.md<br/>AC-3.3<br/>คำที่เล็งต้องถูกล็อก"] --> DS["DESIGN.md 6.2<br/>Target lock:<br/>เทียบกับ target เท่านั้น"]
+    DS --> CODE["src/game-logic.js<br/>handlePlayingKey"]
+    DS --> TEST["tests/input.test.js<br/>AC-3.3: target cat ...<br/>does not switch to car"]
+    TEST -->|"npm test"| REP["TEST_REPORT.md<br/>pass"]
+    CODE --> REV["REVIEW.md<br/>ตรวจว่าตรงกับ AC"]
+```
+
 ### 11.5 ประวัติใน git
 
-```
-f2aaeac  Initial commit                          ← นิยาม agent ทั้ง 5
-96c2dd6  PRD: finalized after PO questions
-2be6d16  Design: architecture and test plan
-440dfed  Build: tests (238) and implementation, all passing
-e874d16  Review round 1: changes required (R-01..R-05)
-68f40af  Round 2: R-01..R-04 fixed, 245 tests pass, review approve with changes
-0cb062d  feat: Update design and implementation for fit-to-window feature
+```mermaid
+gitGraph
+    commit id: "f2aaeac Initial commit (agent 5 ตัว)"
+    commit id: "96c2dd6 PRD finalized"
+    commit id: "2be6d16 Design"
+    commit id: "440dfed Build: 238 tests pass"
+    commit id: "e874d16 Review round 1"
+    commit id: "68f40af Round 2: 245 tests"
+    commit id: "0cb062d Fit-to-window"
 ```
 
 ลองใช้ `git show <commit>` ดูทีละขั้นได้ จะเห็นว่าแต่ละช่วงของ pipeline เปลี่ยนอะไรบ้าง
