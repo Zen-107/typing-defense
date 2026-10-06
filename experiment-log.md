@@ -1,0 +1,2 @@
+- PO agent ใช้เวลา ... นาที, ได้ 9 user stories / ~45 ACs
+- PO ถามคำถามกลับ 5 ข้อ → มนุษย์ตัดสินใจ (intervention #1: requirement clarification)
