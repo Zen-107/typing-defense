@@ -28,6 +28,7 @@ Typing Defense is a single-player browser typing game. Words fall from the top o
 - **US-8 Difficulty progression** - As a player, I want the game to get harder over time up to a limit, so that it stays challenging but is still possible to play.
 - **US-9 HUD** - As a player, I want to see my score, lives, and level at all times, so that I always know where I stand.
 - **US-10 Auto-pause** - As a player, I want the game to pause automatically when I switch away from the tab or window, so that I don't lose lives while I'm not looking.
+- **US-11 Fit to window** - As a player in a small browser window, I want the whole game to shrink to fit the window, so that I never lose a life to a word I couldn't see.
 
 ---
 
@@ -108,7 +109,7 @@ Definitions used below:
 ### US-9 HUD
 - **AC-9.1** In PLAYING state, the HUD always shows "Score: N", "Lives: N" (or N heart icons, where N = current lives), and "Level: N".
 - **AC-9.2** The HUD shows the new values in the same rendered frame as the state change (score after a destroy, lives after a miss, level at each 30 s boundary).
-- **AC-9.3** The HUD is outside the 800 x 600 word area, or on top of it but never covering any word text. Words are always fully visible from y = 0 to y = 600.
+- **AC-9.3** The HUD is outside the 800 x 600 word area, or on top of it but never covering any word text. Words are always fully visible on screen from y = 0 to y = 600, at every browser window size (see US-11). No part of a word is ever hidden by clipping, scrolling, or the window edge before it reaches the miss line.
 - **AC-9.4** When the level goes up, the text "Level N" is shown in the center of the playfield for 1000 ms (+/- 100 ms) of game time. The game does not pause.
 - **AC-9.5** In PAUSED state, the HUD stays visible and shows the same score, lives, and level as at the moment the pause began.
 
@@ -129,6 +130,16 @@ Definitions used below:
 - **AC-10.8** Regaining focus never resumes the game automatically. Only Enter resumes it. There is no Enter guard on resume, so Enter is accepted as soon as the PAUSED state begins.
 - **AC-10.9** The 500 ms game-over Enter guard (AC-6.5) is not affected by pause, because pause can only start from PLAYING. If the player loses the last life and a focus loss happens in the same frame, GAME_OVER wins and the state does not become PAUSED.
 - **AC-10.10** Score, lives, level, words destroyed, typo counter, and accuracy after a pause-and-resume are the same as if the pause never happened.
+
+### US-11 Fit to window
+"Game display" means the full displayed game: the 800 x 600 playfield plus the HUD. "Window" means the browser viewport in CSS px. "Reference size" means 667 x 567 CSS px.
+- **AC-11.1** When the window is smaller than the reference size in either width or height, the game display scales down to fit inside the window. It uses one scale factor for both width and height, so the displayed width/height ratio matches the unscaled ratio within +/- 1%. Example test sizes: 640 x 480, 500 x 400, 400 x 300, 320 x 240.
+- **AC-11.2** At every window size, including all sizes in AC-11.1 and every size at or above the reference size, the game display's bounding box is fully inside the window. Every edge is within the window bounds within 1 CSS px. No part of the game display is clipped.
+- **AC-11.3** At every window size, the page shows no horizontal or vertical scrollbar. The page's scroll width and scroll height are no larger than the window's width and height.
+- **AC-11.4** At every window size, the whole playfield from y = 0 to y = 600 (including the miss line at y = 600), the full HUD (score, lives, level), and all overlay text (start, paused, game over, level banner) are inside the visible area.
+- **AC-11.5** Resizing the window during any state (START, PLAYING, PAUSED, GAME_OVER) rescales the game display to meet AC-11.1 to AC-11.4 by the next rendered frame after the resize event. A resize never changes the game state, score, lives, level, elapsed time, spawn timer, word positions, target, or typed prefix. A resize does not cause a pause by itself; only focus loss does (AC-10.1).
+- **AC-11.6** Display size never affects gameplay. All game logic uses logical playfield coordinates (800 x 600). These all stay the same for every window size: spawn x range, fall speed in logical px/s, the miss line at logical y = 600, and the time a word takes to reach it (15.0 s at level 1). Example: a full level-1 fall takes 15.0 s (+/- 0.1 s) both at 1280 x 720 and at 400 x 300.
+- **AC-11.7** When the window is at least the reference size in both width and height, word text is at least 20 CSS px tall (NFR-8). Below the reference size, text may be smaller than 20 CSS px, scaled by the same factor as the rest of the game display.
 
 ---
 
@@ -197,7 +208,11 @@ These pacing values are confirmed for the MVP. They may be tuned after the first
 - **NFR-5 Input latency**: a keystroke's effect (typed prefix color, destroy, HUD update) appears in the next rendered frame (<= 17 ms at 60 fps).
 - **NFR-6 Focus**: the game receives keystrokes as soon as the page loads, without the player clicking first. Letter and Backspace keys do not trigger browser default actions (e.g. scrolling, back navigation) while the game page is focused.
 - **NFR-7 Testability**: the scoring, level, spawn-interval, fall-speed, length-range, and input-matching rules must be checkable with unit tests that do not need a rendered page.
-- **NFR-8 Readability**: word text is at least 20 px tall at 100% zoom, and the contrast ratio between word text and background is at least 4.5:1.
+- **NFR-8 Readability**:
+  - At 100% browser zoom, in a window of at least 667 x 567 CSS px, word text is at least 20 CSS px tall.
+  - In smaller windows, the game display scales down to fit (US-11), so text may be smaller than 20 CSS px. Fitting the whole game in the window takes priority over the minimum text size.
+  - The contrast ratio between word text and background is at least 4.5:1 at every window size.
+- **NFR-9 No clipping or scrolling**: at every window size, the whole game display (playfield, miss line, and HUD) is visible with no clipping and no page scrolling (AC-11.2 to AC-11.4).
 
 ---
 
@@ -212,6 +227,7 @@ These pacing values are confirmed for the MVP. They may be tuned after the first
 - Localization (UI and words in English only).
 - Animations beyond the life-lost flash (AC-5.5) and the level-up banner (AC-9.4). No particle effects on destroy.
 - Tutorial mode, practice mode, levels beyond 10.
+- A "please enlarge the window" hint or warning for small windows. Small windows are handled only by scaling down (US-11).
 
 ---
 
@@ -220,10 +236,20 @@ None remain. All earlier questions (OQ-1 to OQ-5) were answered on 2026-10-06. S
 
 Possible follow-ups (they do not block the MVP):
 - Should the player be able to pause manually with a key? Today this is out of scope, and Escape is already used to clear the target.
+- Should a small-window hint be added later (e.g. "Text is small - enlarge the window for best play") when the window is below 667 x 567 CSS px? Today this is out of scope (Section 6).
+- Is there a smallest window size we officially support for playability? AC-11.1 tests down to 320 x 240. Below that, the no-clip and no-scroll rules still apply, but text may be too small to read.
 
 ---
 
 ## 8. Changelog
+
+### 2026-10-06 - Revision 3 (review finding R-06 / QA N-1)
+- Decision: the game display scales down to fit small windows. It is never clipped and never scrolled, it keeps its aspect ratio, and the whole playfield and HUD are always visible. The 20 CSS px minimum text size applies only in windows of at least 667 x 567 CSS px; below that, text may be smaller.
+- Reason: code review Round 2 (docs/REVIEW.md, R-06) and QA Round 2 (docs/TEST_REPORT.md, N-1) found that the canvas had a minimum display size of 667 x 567 CSS px. In smaller windows it was clipped on the right and bottom, so a word could disappear before the miss line and cost a life the player never saw. This broke AC-9.3.
+- Changed: AC-9.3 (words are fully visible at every window size, with no clipping or scrolling), NFR-8 (the 20 px minimum only applies in windows of at least 667 x 567 CSS px; contrast applies at every size).
+- Added: US-11 Fit to window with AC-11.1 to AC-11.7, and NFR-9 (no clipping or scrolling).
+- Out of Scope: added the small-window hint.
+- Open Questions: added two non-blocking follow-ups (a small-window hint, and the smallest supported window size).
 
 ### 2026-10-06 - Revision 2 (open questions answered by the user)
 - OQ-1 -> YES: added auto-pause.

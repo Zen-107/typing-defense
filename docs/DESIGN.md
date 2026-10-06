@@ -1,6 +1,6 @@
 # Typing Defense - Technical Design (MVP)
 
-Source of truth: `docs/PRD.md` (Revision 2, including US-10 Auto-pause). This document does not change any requirement. Where the PRD is unclear, the design picks a default and lists it under Section 11 "Questions for PO".
+Source of truth: `docs/PRD.md` (Revision 3, including US-10 Auto-pause and US-11 Fit to window). This document does not change any requirement. Where the PRD is unclear, the design picks a default and lists it under Section 11 "Questions for PO".
 
 ---
 
@@ -11,7 +11,7 @@ Source of truth: `docs/PRD.md` (Revision 2, including US-10 Auto-pause). This do
 | Language | Plain JavaScript (ES2020+), ES modules (`import` / `export`) | Runs natively in all target browsers (NFR-1) and in Node. No transpiling. |
 | Build | None | Nothing to install or configure. The files in `src/` are what the browser loads. |
 | Rendering | One `<canvas>` element, 2D context | 10 words + HUD is cheap to redraw every frame (NFR-2). One draw path, full control over per-character colors (AC-3.9). |
-| Font | System monospace stack (`"Courier New", Consolas, monospace`), 24 px | Fixed character width lets the pure logic compute word width without the DOM (AC-2.2). No web font, so no network request (NFR-1). 24 px >= 20 px (NFR-8). |
+| Font | System monospace stack (`"Courier New", Consolas, monospace`), 24 px | Fixed character width lets the pure logic compute word width without the DOM (AC-2.2). No web font, so no network request (NFR-1). 24 logical px shows as >= 20 CSS px in windows of at least 667 x 567 (NFR-8, AC-11.7; see 6.3). |
 | Game loop | `requestAnimationFrame` in `main.js` | Frame-rate-independent `dt` comes from the rAF timestamp (NFR-3). |
 | Unit tests | Node built-in test runner (`node:test`) + `node:assert/strict` | No test library needed. Node 21 or newer (glob arguments, see R-1); Node 24 in use. |
 | Dependencies | None (no npm packages for game or tests) | `package.json` exists only to set `"type": "module"` and a `test` script. |
@@ -36,7 +36,7 @@ Run the tests (from the repo root):
 package.json                 # { "type": "module", "private": true, "scripts": { "test": "node --test \"tests/**/*.test.js\"" } } - no dependencies
 src/
   index.html                 # page shell: <canvas id="game">, loads main.js as type="module"
-  style.css                  # page layout, canvas scaling, dark background
+  style.css                  # page layout, fit-to-window canvas sizing (US-11), dark background
   game-logic.js              # ALL game rules, pure functions, constants
   words.js                   # static word list (export const WORDS)
   renderer.js                # draws a state onto the canvas; no rules
@@ -83,7 +83,7 @@ Browser glue only:
 - Passes `Math.random` as `rng`. This is the only place randomness and real time enter the game.
 
 ### `src/index.html` / `src/style.css`
-Static shell. Canvas element with `tabindex="0"`, script `<script type="module" src="./main.js">`. CSS centers the canvas, scales it to fit the window while keeping aspect ratio, sets `overflow: hidden` on `body` (no scrolling).
+Static shell. Canvas element with `tabindex="0"`, script `<script type="module" src="./main.js">`. CSS sizes the canvas as the largest 800:680 box that fits the viewport (no minimum size), centres it, and sets `overflow: hidden` on `html, body`, so nothing is clipped and nothing scrolls (US-11, NFR-9; details in 6.3).
 
 ---
 
@@ -204,7 +204,7 @@ export function update(state, dtSec, rng, wordsByLength) { /* ... */ }
 | `fallSpeed(level)` | px/s, `min(130, 40 + 10*(level-1))` | AC-8.3, AC-8.5 |
 | `lengthRange(level)` | `[min, max]` from `LENGTH_RANGES` | AC-8.4, 4.3 |
 | `pointsFor(wordLength, level)` | `10 * wordLength * level` | AC-7.1, AC-7.2 |
-| `accuracyPercent(correct, typos)` | integer 0..100; `Math.round(correct / (correct + typos) * 100)`; 0 when both are 0 | AC-6.3 |
+| `accuracyPercent(correct, typos)` | integer 0..100; `Math.round((correct * 100) / (correct + typos))`; 0 when `correct + typos === 0`. Multiply first: `correct * 100` is an exact integer, so an exact decimal .5 result (e.g. 23 / 40 = 57.5) is exactly representable and rounds half up. Dividing first (`correct / total * 100`) introduces binary rounding error and can turn 57.5 into 57.49999..., giving 57 instead of 58. | AC-6.3, Q-4 |
 | `clampDt(dtSec)` | `min(max(dtSec, 0), MAX_DT_SEC)` (negative/NaN -> 0) | AC-2.8 |
 
 ### 5.3 Words and spawning
@@ -290,14 +290,54 @@ export function createRenderer(canvas) // -> { render(state) }
 | GAME_OVER vs focus loss (AC-10.9) | JS runs event handlers and rAF callbacks one at a time. If `update` already set GAME_OVER, a later focus loss is a no-op. If the focus loss is handled first, the game pauses before the life is lost, and no life is lost while paused. Both outcomes satisfy the AC. |
 | NFR-6 focus/defaults | Listen for `keydown` on `window` (no click needed); `canvas.focus()` at load. `preventDefault()` for letters, Backspace, Escape, Enter and Space when no ctrl/meta/alt modifier is held. |
 
-### 6.3 Rendering layout
+### 6.3 Rendering layout and fit-to-window sizing
 
-- Canvas logical size: 800 x 680. Top 40 px: HUD strip ("Score: N", "Lives: N", "Level: N"), outside the word area (AC-9.1, AC-9.3).
-- Playfield origin at canvas y = 40 + 28 = 68: the 28 px pad keeps the glyphs of a word with baseline y = 0 fully visible (text sits above its baseline). 12 px pad below y = 600 for descenders. Canvas height = 40 + 28 + 600 + 12 = 680.
-- Canvas backing store is scaled by `devicePixelRatio`; CSS scales the element to fit the window, keeping aspect ratio (PRD: playfield may be scaled for display).
-- Colors (dark theme): background `#101418`, words `#e8e8e8`, target untyped `#ffd54a` + underline, typed prefix `#4cd964`. All have contrast > 4.5:1 on the background (NFR-8). Life flash: 6 px red border `#ff3b30`.
-- Per state: START -> title, "Press Enter to start", instruction line, no words (AC-1.1). PLAYING -> HUD, words, banner, flash. PAUSED -> HUD + frozen words + semi-transparent overlay with "Paused - press Enter to resume" (AC-10.4, AC-9.5). GAME_OVER -> "Game Over", score, level, words destroyed, accuracy "N%", "Press Enter to play again"; active words are not drawn (AC-6.1, AC-6.2).
+This section describes what is built in `src/style.css` and `src/renderer.js` (PRD Revision 3, US-11).
+
+**Logical canvas (unchanged by window size).**
+- Logical size 800 x 680, used for all drawing: top 40 px HUD strip ("Score: N", "Lives: N", "Level: N"), then a 28 px top pad, the 600 px playfield, and a 12 px bottom pad. 40 + 28 + 600 + 12 = 680.
+- The HUD is outside the word area (AC-9.1, AC-9.3). Playfield y = 0 is at canvas y = 68; the 28 px pad keeps the glyphs of a word with baseline y = 0 fully visible (Q-3), and the 12 px pad keeps descenders visible down to the miss line at y = 600.
+- Game logic never sees the display size; it only uses logical 800 x 600 coordinates (AC-11.6).
+
+**Displayed size (CSS, `src/style.css`).** The canvas is shown as the largest 800:680 box that fits the viewport, with one uniform scale:
+- `#game { width: min(100vw, calc(100vh * 800 / 680)); height: min(100vh, calc(100vw * 680 / 800)); flex: none; margin: auto; }`
+- `body { display: flex; }`, `html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; }`
+- Width and height are both set explicitly, so the displayed shape never depends on the canvas's backing-store (intrinsic) size. `flex: none` stops flex layout from growing or shrinking the box (REVIEW R-08). `margin: auto` centres it in both axes.
+- There is no minimum size. At every window size the box fits fully inside the viewport, so nothing is clipped and nothing scrolls (AC-11.1 to AC-11.4, NFR-9). Text shrinks with the rest of the display below the reference size (AC-11.7).
+- A window resize changes only the CSS box (immediately) and the backing store (next frame). It never touches game state, and it does not pause the game (AC-11.5).
+
+**Backing store and transform (`src/renderer.js`, `ensureSize`).**
+- Called at the start of every `render` (no `resize` listener). It reads `canvas.clientWidth`, `canvas.clientHeight` and `window.devicePixelRatio`, compares them with the cached values, and only when one changed sets `canvas.width = round(clientWidth * dpr)` and `canvas.height = round(clientHeight * dpr)` (minimum 1). If the canvas is not laid out yet, it falls back to 800 x 680.
+- Every frame it then calls `ctx.setTransform(canvas.width / 800, 0, 0, canvas.height / 680, 0, 0)`, so all drawing code keeps using logical coordinates. This also covers zoom and monitor (DPR) changes by the next frame (AC-11.5).
+- Reallocating the backing store resets the context state; this is harmless because every draw helper sets its own font, colours, alignment and baseline.
+
+**Text size (NFR-8, AC-11.7).** Word text is drawn at 24 logical px. The display scale is `min(viewportW / 800, viewportH / 680)`. At the reference size 667 x 567 CSS px the scale is about 0.8337, so words are at least 24 x 0.8337 = 20.0 CSS px tall at any window of at least 667 x 567. Below that, text is smaller, scaled with the rest of the display. The HUD uses 20 logical px; NFR-8's 20 px rule applies to word text only.
+
+**Colours and contrast (NFR-8, every window size).**
+- Background `#101418`, words `#e8e8e8` (15.1:1), target untyped `#ffd54a` + underline (13.1:1), typed prefix `#4cd964` (10.1:1). Life flash: 6 px red border `#ff3b30`. Level banner: bold 48 px "Level N" in `#6b7785`, at the centre of the playfield.
+- **Word halo (REVIEW R-07):** every word is drawn with `strokeText` in `COLORS.bg` (`#101418`), `lineWidth = 4` logical px, `lineJoin = 'round'`, before its fill. Each glyph is therefore edged by the background colour, so word colours keep their contrast even where a word crosses the banner. For the target word the halo is stroked once for the whole word (before the typed and untyped fills, so neither fill is overpainted), and the 2 px underline gets a dark backing rect (underline rect grown by the halo width) before it is filled.
+
+**Draw order.**
+- PLAYING: HUD, banner, words, flash. The banner is drawn before the words, so it can never hide word text (AC-9.3, AC-9.4, REVIEW R-03).
+- PAUSED: the same order, then a semi-transparent overlay below the HUD strip with "Paused - press Enter to resume" (AC-10.4, AC-9.5). Words stay at their frozen positions behind it.
+- START: title, "Press Enter to start", the instruction line; no words, no HUD (AC-1.1).
+- GAME_OVER: "Game Over", score, level reached, words destroyed, accuracy "N%", "Press Enter to play again". No words, no banner, no flash (AC-6.1, AC-6.2, Q-7).
 - The renderer draws every rAF frame after `update`, so any keydown-handled change appears in the next frame (AC-9.2, NFR-5).
+
+**PRD mapping for this section.**
+
+| PRD item | How it is met |
+|---|---|
+| AC-11.1 uniform scale-down below 667 x 567 | One CSS box of ratio 800:680 from `min()`; the drawing uses `setTransform` from the backing store, whose x and y scales differ by at most about 0.2% (rounding, R-09), inside the +/- 1% tolerance. |
+| AC-11.2 fully inside the window | `width <= 100vw` and `height <= 100vh` by construction, centred with `margin: auto`, `flex: none`. |
+| AC-11.3 no scrollbars | `overflow: hidden` on `html, body`, and the box never exceeds the viewport. |
+| AC-11.4 playfield, miss line, HUD and overlays visible | They are all inside the logical 800 x 680 canvas, which is always fully displayed. |
+| AC-11.5 resize in any state | CSS re-layout is immediate; `ensureSize` re-sizes the backing store on the next frame. No game state is touched; no pause. |
+| AC-11.6 gameplay independent of display | Logic uses only logical units; display size enters only `renderer.js`. |
+| AC-11.7 / NFR-8 text size | >= 20 CSS px at >= 667 x 567; smaller below, by the same scale. |
+| AC-9.3 words always fully visible | Top and bottom pads, HUD outside the word area, banner behind words, no clipping at any window size. |
+| NFR-8 contrast | Fixed colour pairs above 4.5:1 on the background, plus the dark halo where words cross the banner. |
+| NFR-9 no clipping or scrolling | Same as AC-11.2 to AC-11.4. |
 
 ---
 
@@ -330,11 +370,18 @@ export function createRenderer(canvas) // -> { render(state) }
 | US-6 AC-6.2, 6.3 | `accuracyPercent` | renderer GAME_OVER screen | `difficulty.test.js`, manual |
 | US-7 AC-7.1-7.3 | `pointsFor`, `handleKey` destroy path | - | `difficulty.test.js`, `input.test.js` |
 | US-8 AC-8.1-8.5 | `levelForElapsed`, `spawnIntervalMs`, `fallSpeed`, `lengthRange`, `update` step 3 | - | `difficulty.test.js`, `spawn.test.js` |
-| US-9 AC-9.1-9.3, 9.5 | state fields | renderer HUD strip, layout | manual |
+| US-9 AC-9.1, 9.2, 9.5 | state fields | renderer HUD strip, layout | manual |
+| US-9 AC-9.3 | - | HUD strip outside word area, top/bottom pads, banner drawn before words, fit-to-window CSS (6.3) | manual |
 | US-9 AC-9.4 | `bannerMs` in `update` | renderer banner | `update.test.js`, manual |
 | US-10 AC-10.1-10.10 | `handleFocusLoss`, `handleKey` (PAUSED), `update` (PAUSED no-op, `skipNextDt`) | main focus listeners, overlay | `pause.test.js`, manual (real tab switch) |
+| US-11 AC-11.1-11.4 | - | `style.css` `#game` `min()` sizing, `flex: none`, `margin: auto`, `overflow: hidden` | manual (window sizes) |
+| US-11 AC-11.5 | - (no state change on resize) | `renderer.js` `ensureSize` per frame + `setTransform`; CSS re-layout | manual (resize in each state) |
+| US-11 AC-11.6 | all logic in logical units; no display input | renderer is the only place that knows display size | `update.test.js` (NFR-3 fall time), manual (two window sizes) |
+| US-11 AC-11.7 | `FONT_SIZE_PX = 24` | uniform CSS scale (>= 0.8337 at >= 667 x 567) | manual |
 | PRD 4.5 word list | `buildWordIndex` | `words.js` | `words.test.js` |
-| NFR-2, 3, 6, 8 | `clampDt`, dt-based movement | renderer, main | `update.test.js` (NFR-3 at 30/144 fps), manual |
+| NFR-2, 3, 6 | `clampDt`, dt-based movement | renderer, main | `update.test.js` (NFR-3 at 30/144 fps), manual |
+| NFR-8 | `FONT_SIZE_PX` | colours, word halo, fit-to-window scale (6.3) | manual |
+| NFR-9 | - | `style.css` fit-to-window | manual |
 
 ---
 
@@ -351,7 +398,7 @@ export function createRenderer(canvas) // -> { render(state) }
 - A tiny `wordsByLength` (e.g. `{3:['cat','car','dog'], 4:['tree','toad'], ...}`) to make picks predictable.
 
 ### What to test per module
-- **Pure formulas**: every row of the 4.3 table for `levelForElapsed` (0, 29.9, 30, 270, 600), `spawnIntervalMs`, `fallSpeed`, `lengthRange` for levels 1-10; `pointsFor` PRD examples (30, 240, 800); `accuracyPercent` (0/0 -> 0, rounding); `clampDt` (2.0 -> 0.1, negative -> 0).
+- **Pure formulas**: every row of the 4.3 table for `levelForElapsed` (0, 29.9, 30, 270, 600), `spawnIntervalMs`, `fallSpeed`, `lengthRange` for levels 1-10; `pointsFor` PRD examples (30, 240, 800); `accuracyPercent` (0/0 -> 0; round half up including decimal ties that are not exact in binary, e.g. 23/17 -> 58 and 29 correct / 171 typos (29/200) -> 15, plus a sweep over every exact .5 tie with up to 400 keystrokes, with the expected value computed in integer arithmetic); `clampDt` (2.0 -> 0.1, negative -> 0).
 - **`handleKey`**: every AC-3.x and AC-4.x example, including the "cat"/"car" lock example, tie-break by y then id, uppercase letters, ignored keys (digits, space, arrows, `'Shift'`), Enter in each status, Enter guard at `gameOverMs` 499 vs 500, PAUSED ignoring letters/Backspace/Escape (state deep-equals input).
 - **`trySpawn`**: scripted rng to hit each branch: duplicate retry, first-letter retry, 10 failed attempts -> skip, 10 active words -> skip with no rng calls, x bounds with r = 0 and r -> 1 (`0.999999`), length bounds per level, `id` increment.
 - **`update`**: movement over N frames at 30 fps and 144 fps reaches y = 600 at 15.0 s +/- 0.1 s; dt cap; multiple misses in one frame; lives never < 0; GAME_OVER in same update, no spawn after; final miss -> GAME_OVER state has `flashMs === 0` (Q-7; e.g. `lives: 1`, one word at `y: 599.9`, `update(state, 0.05, ...)`, assert `status === 'GAME_OVER'` and `flashMs === 0`), while a non-final miss still sets `flashMs === 300`; spawn cadence (first spawn at t = 0, next at 2000 ms at level 1); AC-2.1 confirmed reading: a countdown running across the 30 s boundary still finishes on the old 2000 ms interval, and only the reschedule after that spawn uses 1850 ms (see the 6.2 example); banner/flash timers count down in game time.
@@ -360,7 +407,13 @@ export function createRenderer(canvas) // -> { render(state) }
 - **Word list**: lowercase a-z only, no duplicates, lengths only 3-8, >= 40 per length.
 
 ### Manual checks (cannot be unit-tested)
-AC-3.9 colors, AC-5.5 flash duration, AC-9.1-9.4 HUD layout and banner, AC-10.4 overlay, real tab switch and window blur, NFR-2 performance, NFR-6 no scrolling / back navigation, NFR-8 font size and contrast, all four browsers.
+AC-3.9 colors, AC-5.5 flash duration, AC-9.1-9.4 HUD layout and banner (words readable across the banner, halo visible), AC-10.4 overlay, real tab switch and window blur, NFR-2 performance (including a maximized window on a large/high-DPI display), NFR-6 no scrolling / back navigation, NFR-8 font size (>= 20 CSS px at >= 667 x 567) and contrast, all four browsers.
+
+US-11 / NFR-9 (fit to window), in each browser:
+- Window sizes 1280 x 720, 667 x 567, 640 x 480, 500 x 400, 400 x 300, 320 x 240: the whole canvas (HUD, playfield, miss line, overlays) is inside the viewport, centred, with no scrollbars, and keeps its 800:680 shape within 1% (AC-11.1 to AC-11.4).
+- Resize during START, PLAYING, PAUSED and GAME_OVER: the display rescales by the next frame; score, lives, level, word positions, target and typed prefix are unchanged; resizing alone does not pause (AC-11.5).
+- A level-1 word takes 15.0 s (+/- 0.1 s) to be missed at both 1280 x 720 and 400 x 300 (AC-11.6).
+- Text is sharp after resize, zoom and moving to another DPR screen.
 
 ---
 
@@ -373,6 +426,11 @@ AC-3.9 colors, AC-5.5 flash duration, AC-9.1-9.4 HUD layout and banner, AC-10.4 
 - **R-5 Spurious blur.** Clicking the browser address bar or devtools fires `blur` and pauses the game. This is intended (AC-10.1) but testers should expect it.
 - **R-6 `file://` loading.** Opening `index.html` by double-click fails (ES modules need HTTP). Documented in Section 1.
 - **R-7 Game-over guard while hidden.** The guard counts frame time; rAF stops in hidden tabs, so the guard can only take longer, never shorter. Acceptable.
+- **R-8 Thin halo in small windows.** The halo extends 2 logical px outside each glyph. At display scales below 0.5 (for example 400 x 300 or 320 x 240 windows) that is under 1 CSS px, so anti-aliasing softens it, and both the halo and the effective contrast of very small text are weaker where words cross the banner. Accepted: below the reference size PRD NFR-8 already allows smaller text, and the colour pairs themselves stay above 4.5:1.
+- **R-9 Overlapping halos (cosmetic).** When two words overlap, the later word's halo cuts into the earlier word's glyphs. Words remain readable on top; this is cosmetic only.
+- **R-10 CSS support.** The sizing needs `min()` and `calc()` with viewport units: Chrome 79+, Firefox 75+, Edge 79+, Safari 11.1+ (Safari 15+ recommended as the tested baseline). All latest stable desktop browsers (NFR-1) qualify. No `aspect-ratio` is needed, because width and height are both set explicitly.
+- **R-11 Rounded sizes and separate x/y scales (REVIEW R-09, deferred by the user).** `ensureSize` uses the integer `clientWidth` / `clientHeight` and computes the x and y transform scales separately, so the backing store can be off by up to 1 CSS px from the fractional displayed box (slight resampling) and the aspect ratio can differ by about 0.2%. Not visible and inside AC-11.1's +/- 1%. The possible fix (`getBoundingClientRect()` and one uniform scale) is deferred.
+- **R-12 Backing-store size on large screens.** The backing store follows displayed size x DPR with no upper bound, so a maximized window on a 4K/5K display at DPR 2 redraws a ~10 Mpx canvas every frame. NFR-2 only covers a mid-range laptop; check in manual performance testing.
 
 ---
 
@@ -383,7 +441,7 @@ None of these block development; the design uses the stated default.
 - **Q-1 AC-2.4 vs AC-2.5 retry budget.** Does a pick rejected for sharing the target's first letter use one of the 10 attempts from AC-2.4? Default: yes, one shared loop of 10 attempts for both checks; if all fail, the spawn is skipped.
 - **Q-2 Length on retry.** When a pick is rejected, is the length re-rolled or only the word? Default: the length is chosen once per spawn; only the word is re-picked.
 - **Q-3 Baseline at y = 0.** With the baseline at y = 0, a new word's glyphs are above the 600 px area, but AC-9.3 says words are fully visible from y = 0. Default: the renderer adds a 28 px pad above the playfield so the glyphs show; logic still uses baseline y from 0 to 600.
-- **Q-4 Accuracy rounding.** "Nearest integer" for exact .5 cases (e.g. 66.5%). Default: round half up (`Math.round`).
+- **Q-4 Accuracy rounding.** "Nearest integer" for exact .5 cases (e.g. 57.5%). Default (accepted by the user): round half up, computed exactly as `Math.round((correct * 100) / (correct + typos))`. The multiplication must come first so decimal ties stay exact (23 correct / 17 typos = 58%, not 57%; see 5.2).
 - **Q-5 Modifier keys.** AC-3.1 ignores "modifier keys alone", but does Ctrl/Alt/Cmd + letter count as a letter? Default: no, these combos are ignored (and left to the browser). Shift + letter counts.
 - **Q-6 AC-6.5 time base.** GAME_OVER has no game time. Default: the 500 ms guard uses real frame time (capped dt) spent on the GAME_OVER screen.
 - **Q-7 Final-life flash.** When the last life is lost, the game goes straight to GAME_OVER; should the red flash (AC-5.5) still show on the results screen? Default: no. This is enforced in the logic: `update` sets `flashMs = 0` when it enters GAME_OVER (6.1 step 6), so it is unit-testable (assert `flashMs === 0` on the GAME_OVER state after the final miss). The renderer also skips the flash in GAME_OVER.
@@ -396,6 +454,10 @@ None of these block development; the design uses the stated default.
 ---
 
 ## 12. Changelog
+
+### 2026-10-06 - Revision 3
+- **Accuracy formula.** Section 5.2 now gives `Math.round((correct * 100) / (correct + typos))` (0 when the total is 0) and explains why multiplying first keeps exact decimal .5 ties (23/17 -> 58, not 57). Q-4 updated to match. Section 9 notes the decimal-tie tests (23/17 -> 58, 29/200 -> 15, sweep up to 400 keystrokes). Sources: TEST_REPORT Round 2 OI-6; REVIEW Round 2 R-02 (code already fixed).
+- **Canvas sizing and fit-to-window.** Section 6.3 rewritten to describe what is built: the logical 800 x 680 canvas; CSS fit-to-window sizing with `min()`/`calc()`, `flex: none`, `margin: auto` and `overflow: hidden`, with no minimum size and no clipping or scrolling; backing store = displayed size x DPR, checked every frame in `ensureSize`, with a logical `setTransform`; the dark word halo (stroke in `#101418`, 4 logical px, round joins, once per target word, plus a backing rect for the underline); the draw order HUD, banner, words, flash; banner colour `#6b7785`; and a mapping to AC-11.1 to AC-11.7, AC-9.3, NFR-8 (>= 20 px text only at >= 667 x 567) and NFR-9. Also updated: the source line (PRD Revision 3), Section 1 font row, Section 2 and 3 notes on `style.css`, traceability rows for AC-9.3, US-11, NFR-8 and NFR-9, US-11 manual checks in Section 9, and new risks R-8 to R-12 (thin halo at small sizes, overlapping halos, CSS support, deferred REVIEW R-09, backing-store size). Sources: TEST_REPORT Round 2 N-2 (and N-1, resolved by the PRD decision); REVIEW Round 2 R-06, R-07, R-08 (R-09 deferred by the user); PRD Revision 3 / US-11.
 
 ### 2026-10-06 - Revision 2
 - **Test command.** Replaced every `node --test tests/` with `node --test "tests/**/*.test.js"` (Section 1 commands and tech-stack row, Section 2 `package.json` line, Section 9 "How to test"). R-1 now states the glob is the primary command, not a fallback. Reason: the folder form fails with the Node 24 test runner (installed v24.13.1), which treats arguments as glob patterns.

@@ -23,6 +23,7 @@ const COLORS = {
 
 const FONT_FAMILY = '"Courier New", Consolas, monospace';
 const WORD_FONT = `${CONFIG.FONT_SIZE_PX}px ${FONT_FAMILY}`;
+const HALO_WIDTH = 4; // logical px; R-07 dark outline around word text
 
 export function createRenderer(canvas) {
   const ctx = canvas.getContext('2d');
@@ -34,6 +35,8 @@ export function createRenderer(canvas) {
   // so text is sharp at any window size. Checked every frame (cheap compare), which
   // covers window resizes and DPR changes (zoom, moving to another monitor).
   // Drawing always uses the logical 800 x 680 coordinate system via the transform.
+  // The displayed size itself comes from style.css (fit-to-window, US-11); a resize
+  // only changes the backing store and transform here, never the game state.
   function ensureSize() {
     const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
     const cssW = canvas.clientWidth || CANVAS_W;
@@ -78,6 +81,19 @@ export function createRenderer(canvas) {
     ctx.textBaseline = 'alphabetic';
   }
 
+  // R-07 / NFR-8: every word gets a dark halo (stroke in the background colour,
+  // HALO_WIDTH logical px wide, i.e. half of it outside each glyph edge) before
+  // its fill. Where a word crosses the "Level N" banner, each glyph is therefore
+  // bordered by #101418, and the word colours keep their contrast against the
+  // background: plain 15.1:1, target 13.1:1, typed 10.1:1 (all >= 4.5:1).
+  function strokeHalo(text, x, y) {
+    ctx.strokeStyle = COLORS.bg;
+    ctx.lineWidth = HALO_WIDTH;
+    ctx.lineJoin = 'round';
+    ctx.miterLimit = 2;
+    ctx.strokeText(text, x, y);
+  }
+
   function drawWords(state) {
     const target = getTarget(state);
     ctx.font = WORD_FONT;
@@ -85,16 +101,20 @@ export function createRenderer(canvas) {
     ctx.textBaseline = 'alphabetic';
     for (const w of state.words) {
       const baseY = FIELD_TOP + w.y;
+      // Halo for the whole word first, so the typed/untyped fills never get overpainted.
+      strokeHalo(w.text, w.x, baseY);
       if (target && w.id === target.id) {
         const typed = state.typed;
         const rest = w.text.slice(typed.length);
+        const fullW = ctx.measureText(w.text).width;
+        // Halo behind the underline too.
+        ctx.fillStyle = COLORS.bg;
+        ctx.fillRect(w.x - HALO_WIDTH / 2, baseY + 4 - HALO_WIDTH / 2, fullW + HALO_WIDTH, 2 + HALO_WIDTH);
         ctx.fillStyle = COLORS.typed;
         ctx.fillText(typed, w.x, baseY);
         const typedW = ctx.measureText(typed).width;
         ctx.fillStyle = COLORS.target;
         ctx.fillText(rest, w.x + typedW, baseY);
-        const fullW = ctx.measureText(w.text).width;
-        ctx.fillStyle = COLORS.target;
         ctx.fillRect(w.x, baseY + 4, fullW, 2);
       } else {
         ctx.fillStyle = COLORS.word;
